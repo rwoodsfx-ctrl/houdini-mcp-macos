@@ -1,7 +1,14 @@
 import numpy as np
 import math
 import os
+import tempfile
 import hou
+
+# OpenGL rendering is not supported on macOS (Houdini uses Vulkan/Metal there)
+# and crashes Houdini instantly. Vulkan is the modern viewport renderer that
+# replaced OpenGL — on macOS it runs through MoltenVK on top of Metal.
+# Default is vulkan (fast, viewport-quality); karma is also allowed (use karma_engine="gpu" for Karma XPU).
+SUPPORTED_RENDER_ENGINES = {"vulkan", "karma"}
 
 def find_displayed_geometry():
     """Find all displayed geometry nodes in the scene."""
@@ -338,41 +345,50 @@ def adjust_camera_to_fit_bbox(camera, bbox, padding_factor=1.1):
         import traceback
         traceback.print_exc()
 
-def setup_render_node(render_engine="opengl", karma_engine="cpu", render_path=None, camera_path="/obj/MCP_CAMERA", view_name=None, rotation=None, is_ortho=False):
+def setup_render_node(render_engine="vulkan", karma_engine="cpu", render_path=None, camera_path="/obj/MCP_CAMERA", view_name=None, rotation=None, is_ortho=False):
     """
     Create a render node based on the specified render engine.
-    
+
     Args:
-        render_engine: The render engine to use ("opengl", "karma", or "mantra")
+        render_engine: The render engine to use ("karma" or "vulkan". Use karma_engine="gpu" for Karma XPU). OpenGL is
+            not supported (it crashes Houdini on macOS / Vulkan builds).
         karma_engine: For Karma, which engine to use ("cpu" or "gpu")
-        render_path: Path to save the render (default is C:\\temp\\)
+        render_path: Path to save the render. Defaults to the OS temp directory.
         camera_path: Path to the camera to use for rendering
         view_name: Optional name of the view (for filename)
         rotation: Camera rotation (for filename if view_name not provided)
         is_ortho: Whether the camera is orthographic (for filename)
-        
+
     Returns:
         Tuple of (render node, filepath)
     """
     try:
+        engine = (render_engine or "vulkan").lower()
+        if engine not in SUPPORTED_RENDER_ENGINES:
+            raise ValueError(
+                f"Unsupported render_engine '{render_engine}'. "
+                f"Allowed: {sorted(SUPPORTED_RENDER_ENGINES)} (opengl is disabled)."
+            )
+
         # Set default render path if not specified
         if not render_path:
-            render_path = "C:/temp/"
-        
+            render_path = tempfile.gettempdir()
+
         # Ensure directory exists
         if not os.path.exists(render_path):
             os.makedirs(render_path)
-        
+
         # Base render node name on render engine
-        if render_engine.lower() == "karma":
+        # "vulkan" is an alias for the flipbook ROP — Houdini doesn't ship a
+        # standalone Vulkan ROP. Flipbook is the viewport-snapshot path that
+        # replaced the legacy opengl ROP and uses whatever the active viewport
+        # renderer is (Vulkan/Metal on macOS).
+        if engine == "vulkan":
+            render_node_name = "MCP_FLIPBOOK_RENDER"
+            node_type = "flipbook"
+        else:  # karma
             render_node_name = f"MCP_{karma_engine.upper()}_KARMA"
             node_type = "karma"
-        elif render_engine.lower() == "mantra":
-            render_node_name = "MCP_MANTRA"
-            node_type = "ifd"
-        else:  # Default to opengl
-            render_node_name = "MCP_OGL_RENDER"
-            node_type = "opengl"
         
         # Create filename based on projection type and rotation/view name
         proj_type = "ortho" if is_ortho else "persp"
@@ -412,22 +428,21 @@ def setup_render_node(render_engine="opengl", karma_engine="cpu", render_path=No
         resy = camera.parm("resy").eval()
             
         # Set up parameters based on render engine
-        if render_engine.lower() == "opengl":
-            # Set the camera
+        if engine == "vulkan":
+            # Vulkan ROP uses the same param names that the legacy opengl ROP
+            # did (camera / tres / res1 / res2 / picture).
             if render_node.parm("camera"):
                 render_node.parm("camera").set(camera_path)
-            
-            # Set resolution
+
             if render_node.parm("tres"):
                 render_node.parm("tres").set(True)
                 render_node.parm("res1").set(resx)
                 render_node.parm("res2").set(resy)
-            
-            # Set output path
+
             if render_node.parm("picture"):
                 render_node.parm("picture").set(filepath)
-            
-        elif render_engine.lower() == "karma":
+
+        elif engine == "karma":
             # Set the camera
             if render_node.parm("camera"):
                 render_node.parm("camera").set(camera_path)
@@ -453,27 +468,6 @@ def setup_render_node(render_engine="opengl", karma_engine="cpu", render_path=No
             if render_node.parm("picture"):
                 render_node.parm("picture").set(filepath)
             
-        elif render_engine.lower() == "mantra":
-            # Set the camera
-            if render_node.parm("camera"):
-                render_node.parm("camera").set(camera_path)
-            
-            # Set resolution
-            if render_node.parm("override_camerares"):
-                render_node.parm("override_camerares").set(True)
-                render_node.parm("res_fraction").set("specific")
-                # Use the correct parameter names for Mantra
-                if render_node.parm("res_overridex"):
-                    render_node.parm("res_overridex").set(resx)
-                    render_node.parm("res_overridey").set(resy)
-                elif render_node.parm("res_override_x"):  # Try alternate names
-                    render_node.parm("res_override_x").set(resx)
-                    render_node.parm("res_override_y").set(resy)
-            
-            # Set output path
-            if render_node.parm("vm_picture"):
-                render_node.parm("vm_picture").set(filepath)
-        
         # Set to render 1 frame for all render engines
         if render_node.parm("trange"):
             render_node.parm("trange").set(0)  # Set to render current frame
@@ -488,15 +482,15 @@ def setup_render_node(render_engine="opengl", karma_engine="cpu", render_path=No
 
 # ======== RENDERING FUNCTIONS ========
 
-def render_single_view(orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="opengl", karma_engine="cpu"):
+def render_single_view(orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="vulkan", karma_engine="cpu"):
     """
     Set up camera rig and render a single view with specified rotation.
     
     Args:
         orthographic: If True, create an orthographic camera
         rotation: Tuple of (rx, ry, rz) rotation angles in degrees to apply to the camera center
-        render_path: Path to save the render (default is C:\\temp\\)
-        render_engine: The render engine to use ("opengl", "karma", or "mantra")
+        render_path: Path to save the render (default is the OS temp directory)
+        render_engine: The render engine to use ("karma" or "vulkan". Use karma_engine="gpu" for Karma XPU)
         karma_engine: For Karma, which engine to use ("cpu" or "gpu")
         
     Returns:
@@ -560,7 +554,7 @@ def render_single_view(orthographic=False, rotation=(0, 90, 0), render_path=None
     print(f"Rendered frame to: {filepath}")
     return filepath
 
-def render_quad_view(orthographic=True, render_path=None, render_engine="opengl", karma_engine="cpu"):
+def render_quad_view(orthographic=True, render_path=None, render_engine="vulkan", karma_engine="cpu"):
     """
     Create four standard views and render them:
     - Front view (0,0,0)
@@ -570,8 +564,8 @@ def render_quad_view(orthographic=True, render_path=None, render_engine="opengl"
     
     Args:
         orthographic: If True, use orthographic projection for ALL views including perspective
-        render_path: Path to save the renders (default is C:/temp/)
-        render_engine: The render engine to use ("opengl", "karma", or "mantra")
+        render_path: Path to save the renders (default is the OS temp directory)
+        render_engine: The render engine to use ("karma" or "vulkan". Use karma_engine="gpu" for Karma XPU)
         karma_engine: For Karma, which engine to use ("cpu" or "gpu")
     
     Returns:
@@ -659,14 +653,14 @@ def render_quad_view(orthographic=True, render_path=None, render_engine="opengl"
     
     return rendered_files
 
-def render_specific_camera(camera_path, render_path=None, render_engine="opengl", karma_engine="cpu"):
+def render_specific_camera(camera_path, render_path=None, render_engine="vulkan", karma_engine="cpu"):
     """
     Render using a specific camera that already exists in the scene.
     
     Args:
         camera_path: Path to the camera node (e.g., "/obj/mycamera")
-        render_path: Path to save the render (default is C:\\temp\\)
-        render_engine: The render engine to use ("opengl", "karma", or "mantra")
+        render_path: Path to save the render (default is the OS temp directory)
+        render_engine: The render engine to use ("karma" or "vulkan". Use karma_engine="gpu" for Karma XPU)
         karma_engine: For Karma, which engine to use ("cpu" or "gpu")
         
     Returns:
@@ -733,14 +727,14 @@ def render_specific_camera(camera_path, render_path=None, render_engine="opengl"
 # ======== EXAMPLE USAGE ========
 
 # Example 1: Render four standard views using orthographic projection with OpenGL
-# render_quad_view(orthographic=True, render_path="C:/temp/", render_engine="opengl")
+# render_quad_view(orthographic=True, render_path=tempfile.gettempdir(), render_engine="vulkan")
 
 # Example 2: Render single view with custom rotation in perspective mode using Karma (GPU)
-# render_single_view(orthographic=False, rotation=(-30, 45, 0), render_path="C:/temp/",render_engine="karma", karma_engine="gpu")
+# render_single_view(orthographic=False, rotation=(-30, 45, 0), render_path=tempfile.gettempdir(),render_engine="vulkan", karma_engine="gpu")
 
 # Example 3: Render using a specific existing camera in the scene with Mantra
-# render_specific_camera("/obj/my_camera", render_path="C:/temp/", render_engine="mantra")
+# render_specific_camera("/obj/my_camera", render_path=tempfile.gettempdir(), render_engine="mantra")
 
 # Example 4: Render a quad view with perspective projection using Karma (CPU)
-# render_quad_view(orthographic=False, render_path="C:/temp/", 
-#                 render_engine="karma", karma_engine="cpu")
+# render_quad_view(orthographic=False, render_path=tempfile.gettempdir(), 
+#                 render_engine="vulkan", karma_engine="cpu")
