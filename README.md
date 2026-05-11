@@ -3,7 +3,7 @@
 > **macOS fork** of [capoomgit/houdini-mcp](https://github.com/capoomgit/houdini-mcp).
 > The upstream project assumes Windows + the legacy OpenGL ROP, which crashes
 > Houdini instantly on macOS. This fork is macOS-only — use upstream for
-> Windows. See [What Changed and Why](#what-changed-and-why) for the full list.
+> Windows. See [What Changed and Why](#7-what-changed-and-why) for the full list.
 
 **HoudiniMCP** allows you to control **SideFX Houdini** from **Claude** using the **Model Context Protocol (MCP)**. It consists of:
 
@@ -17,15 +17,15 @@ Below are the complete instructions for setting up Houdini, uv, and Claude Deskt
 ## Table of Contents
 
 1. [Requirements](#requirements)
-2. [Houdini MCP Plugin Installation](#houdini-mcp-plugin-installation)
-   1. [Folder Layout](#folder-layout)
-   2. [Shelf Tool](#shelf-tool)
-   3. [Packages Integration (Optional)](#packages-integration-optional)
-3. [Installing the `mcp` Python Package with uv](#installing-the-mcp-python-package-with-uv)
-4. [Telling Claude Desktop to Use the Bridge](#telling-claude-desktop-to-use-the-bridge)
-5. [Using Another IDE / Harness](#using-another-ide--harness)
-6. [Render Engines](#render-engines)
-7. [What Changed and Why](#what-changed-and-why)
+2. [Houdini MCP Plugin Installation](#1-houdini-mcp-plugin-installation)
+   1. [Folder Layout](#11-folder-layout)
+   2. [Shelf Tool](#12-shelf-tool)
+   3. [Packages Integration (Optional)](#13-packages-integration-optional)
+3. [Installing the `mcp` Python Package with uv](#2-installing-the-mcp-python-package-with-uv)
+4. [Telling Claude Desktop to Use the Bridge](#3-telling-claude-desktop-to-use-the-bridge)
+5. [Using Another IDE / Harness](#4-using-another-ide--harness)
+6. [Render Engines](#6-render-engines)
+7. [What Changed and Why](#7-what-changed-and-why)
 8. [Acknowledgement](#acknowledgement)
 
 ---
